@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"time"
 )
 
 const (
@@ -58,16 +60,46 @@ func rpcCall(ctx context.Context, rpcURL string, client *http.Client, method str
 }
 
 // fetchOnChainMetadata now uses the correct structs.
+// fetchOnChainMetadata implements the logic from your Python script with added retries.
 func fetchOnChainMetadata(ctx context.Context, mint, rpcURL string, client *http.Client) (*TokenMetadata, error) {
-	// 1. Get account info to find owner and decimals.
+	const maxRetries = 3
+	const retryDelay = 2 * time.Second
+
 	var accInfo GetAccountInfoResponse
-	params := []interface{}{mint, map[string]string{"encoding": "jsonParsed"}}
-	if err := rpcCall(ctx, rpcURL, client, "getAccountInfo", params, &accInfo); err != nil {
-		return nil, fmt.Errorf("getAccountInfo for mint failed: %w", err)
+	var err error
+	var owner string
+	var decimals int
+
+	// 1. Get account info with retries to handle RPC flakiness and propagation lag.
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		params := []interface{}{mint, map[string]string{"encoding": "jsonParsed"}}
+		err = rpcCall(ctx, rpcURL, client, "getAccountInfo", params, &accInfo)
+		if err != nil {
+			log.Printf("[analyzer] getAccountInfo(%s) attempt %d failed: %v", mint, attempt, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		owner = accInfo.Result.Value.Owner
+		decimals = accInfo.Result.Value.Data.Parsed.Info.Decimals
+
+		// Some RPCs briefly return an empty owner for new mints.
+		if owner == "" || owner == "11111111111111111111111111111111" {
+			log.Printf("[analyzer] mint %s has empty or system owner (attempt %d/%d); retrying...", mint, attempt, maxRetries)
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		// Success! Break out of the retry loop.
+		break
 	}
 
-	owner := accInfo.Result.Value.Owner
-	decimals := accInfo.Result.Value.Data.Parsed.Info.Decimals
+	if err != nil {
+		return nil, fmt.Errorf("getAccountInfo for mint %s failed after %d retries: %w", mint, maxRetries, err)
+	}
+	if owner == "" || owner == "11111111111111111111111111111111" {
+		return nil, fmt.Errorf("mint %s still has empty owner after %d retries", mint, maxRetries)
+	}
 
 	if owner != splTokenProgramID {
 		return nil, fmt.Errorf("unsupported token program: %s", owner)
@@ -75,7 +107,7 @@ func fetchOnChainMetadata(ctx context.Context, mint, rpcURL string, client *http
 
 	// 2. Find the Metaplex PDA.
 	var progAccounts GetProgramAccountsResponse
-	params = []interface{}{
+	params := []interface{}{
 		metaplexMetadataProgramID,
 		map[string]interface{}{
 			"encoding": "base64",
@@ -87,20 +119,17 @@ func fetchOnChainMetadata(ctx context.Context, mint, rpcURL string, client *http
 	if err := rpcCall(ctx, rpcURL, client, "getProgramAccounts", params, &progAccounts); err != nil {
 		return nil, fmt.Errorf("getProgramAccounts for pda failed: %w", err)
 	}
-
 	if len(progAccounts.Result) == 0 {
 		return nil, errors.New("metaplex pda not found")
 	}
 	pdaAddress := progAccounts.Result[0].Pubkey
 
-	// 3. Get the raw data of the PDA using the CORRECT struct.
-	// --- FIX IS HERE ---
+	// 3. Get the raw data of the PDA.
 	var pdaInfo GetAccountInfoResponse_Base64
 	params = []interface{}{pdaAddress, map[string]string{"encoding": "base64"}}
 	if err := rpcCall(ctx, rpcURL, client, "getAccountInfo", params, &pdaInfo); err != nil {
 		return nil, fmt.Errorf("getAccountInfo for pda (base64) failed: %w", err)
 	}
-
 	if len(pdaInfo.Result.Value.Data) < 1 {
 		return nil, errors.New("pda has no data")
 	}
@@ -128,7 +157,7 @@ func fetchOnChainMetadata(ctx context.Context, mint, rpcURL string, client *http
 	}
 
 	symbolBytes := rawData[symbolOffset+4 : symbolEnd]
-	symbol := string(bytes.TrimRight(symbolBytes, "\x00")) // Trim trailing null bytes
+	symbol := string(bytes.TrimRight(symbolBytes, "\x00"))
 
 	return &TokenMetadata{Symbol: symbol, Decimals: decimals}, nil
 }

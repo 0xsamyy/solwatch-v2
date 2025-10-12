@@ -1,1 +1,14 @@
+# env and local db
 .env
+*.db
+
+# build artifacts
+/bin/
+*.exe
+*.out
+solwatch
+
+# macOS / editor junk
+.DS_Store
+.idea/
+.vscode/
