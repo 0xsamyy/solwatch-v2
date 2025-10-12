@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/0xsamyy/solwatch/internal/tracker"
+	"github.com/0xsamyy/solwatch-v2/internal/tracker"
 )
 
 // WalletLister is the minimal interface we need from the store.

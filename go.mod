@@ -1,4 +1,4 @@
-module github.com/0xsamyy/solwatch
+module github.com/0xsamyy/solwatch-v2
 
 go 1.25
 

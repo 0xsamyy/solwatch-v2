@@ -7,14 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xsamyy/solwatch-v2/internal/analyzer"
+	"github.com/0xsamyy/solwatch-v2/internal/health"
+	"github.com/0xsamyy/solwatch-v2/internal/tracker"
 	tg "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
-
-	"github.com/0xsamyy/solwatch/internal/health"
-	"github.com/0xsamyy/solwatch/internal/tracker"
 )
 
-// WalletStore is the minimal interface we need from the persistence layer.
 type WalletStore interface {
 	AddWallet(ctx context.Context, addr string) error
 	RemoveWallet(ctx context.Context, addr string) error
@@ -23,39 +22,46 @@ type WalletStore interface {
 
 // Handler coordinates Telegram <-> tracker/store/health.
 type Handler struct {
-	bot     *tg.Bot
-	adminID int64
-	tm      *tracker.Manager
-	st      WalletStore
-	hlth    *health.Health
-
-	// killFn should gracefully shut down the service (cancel context or exit).
-	killFn func()
+	bot      *tg.Bot
+	adminID  int64
+	tm       *tracker.Manager
+	st       WalletStore
+	hlth     *health.Health
+	analyzer *analyzer.Analyzer
+	killFn   func()
 }
 
-// New constructs the Telegram Handler and wires Activity notifications.
-// - bot: an initialized *tg.Bot
-// - tm: tracker manager
-// - st: wallet store
-// - hlth: health aggregator
-// - adminID: numeric chat id allowed to control the bot
-// - killFn: function invoked on /kill (pass a context cancel from main)
-func New(bot *tg.Bot, tm *tracker.Manager, st WalletStore, hlth *health.Health, adminID int64, killFn func()) *Handler {
+// New constructs the Telegram Handler and wires the notification callback.
+func New(bot *tg.Bot, tm *tracker.Manager, st WalletStore, hlth *health.Health, an *analyzer.Analyzer, adminID int64, killFn func()) *Handler {
 	h := &Handler{
-		bot:     bot,
-		adminID: adminID,
-		tm:      tm,
-		st:      st,
-		hlth:    hlth,
-		killFn:  killFn,
+		bot:      bot,
+		adminID:  adminID,
+		tm:       tm,
+		st:       st,
+		hlth:     hlth,
+		analyzer: an,
+		killFn:   killFn,
 	}
 
-	// Bridge tracker -> Telegram (one-line HTML message).
-	tracker.ActivityNotify = func(text string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	tracker.SignatureNotify = func(signature string, trackedAddr string) {
+		log.Printf("[handler] analyzing signature %s for wallet %s", signature, trackedAddr)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		// Always send to the single admin chat.
-		h.sendHTML(ctx, adminID, text)
+
+		summary, err := h.analyzer.AnalyzeSignature(ctx, signature, trackedAddr)
+		if err != nil {
+			log.Printf("[analyzer] error for %s: %v", signature, err)
+			return
+		}
+
+		if summary == "" {
+			log.Printf("[analyzer] signature %s filtered, no notification sent.", signature)
+			return
+		}
+
+		shortAddr := trackedAddr[:4] + "..." + trackedAddr[len(trackedAddr)-4:]
+		finalMessage := fmt.Sprintf("🚨 <b>Activity on %s</b>\n\n%s", shortAddr, summary)
+		h.sendHTML(ctx, h.adminID, finalMessage)
 	}
 
 	return h
@@ -63,35 +69,57 @@ func New(bot *tg.Bot, tm *tracker.Manager, st WalletStore, hlth *health.Health, 
 
 // Run starts long-polling and handles updates until ctx is done.
 func (h *Handler) Run(ctx context.Context) {
-	// Register a single default handler that processes messages.
 	h.bot.RegisterHandler(tg.HandlerTypeMessageText, "", tg.MatchTypePrefix, func(c context.Context, b *tg.Bot, u *models.Update) {
-		// Only accept messages from the configured admin chat.
-		if u.Message == nil {
-			return
-		}
-		if u.Message.Chat.ID != h.adminID {
+		if u.Message == nil || u.Message.Chat.ID != h.adminID {
 			return
 		}
 		h.handleCommand(c, u.Message)
 	})
-
-	// Start long-polling. This blocks until ctx is canceled.
 	h.bot.Start(ctx)
 }
 
 func (h *Handler) handleCommand(ctx context.Context, m *models.Message) {
 	raw := strings.TrimSpace(m.Text)
 	lower := strings.ToLower(raw)
-
-	// Strip bot username suffix (e.g. "/health@mybot" -> "/health")
 	if idx := strings.IndexRune(lower, '@'); idx != -1 {
 		lower = lower[:idx]
 		raw = raw[:idx]
 	}
-
 	switch {
+	// --- Other cases are unchanged ---
 	case lower == "/help":
 		h.replyHelp(ctx, m.Chat.ID)
+
+	// --- NEW DEBUG COMMAND ---
+	case strings.HasPrefix(lower, "/test "):
+		args := strings.Fields(raw[len("/test "):])
+		if len(args) != 2 {
+			h.sendHTML(ctx, m.Chat.ID, "usage: <code>/test &lt;signature&gt; &lt;wallet_address&gt;</code>")
+			return
+		}
+		signature := args[0]
+		walletAddr := args[1]
+
+		// Let the user know we're working on it
+		h.sendHTML(ctx, m.Chat.ID, fmt.Sprintf("🔬 Analyzing signature <code>%s...</code> for wallet <code>%s...</code>", signature[:10], walletAddr[:4]))
+
+		// Call the analyzer directly
+		summary, err := h.analyzer.AnalyzeSignature(ctx, signature, walletAddr)
+		if err != nil {
+			errMsg := fmt.Sprintf("<b>Analysis Failed:</b>\n<code>%v</code>", err)
+			h.sendHTML(ctx, m.Chat.ID, errMsg)
+			return
+		}
+
+		if summary == "" {
+			h.sendHTML(ctx, m.Chat.ID, "✅ <b>Analysis Complete:</b>\nTransaction was filtered (likely spam or dust).")
+			return
+		}
+
+		// Format and send the result, clearly marking it as a test
+		shortAddr := walletAddr[:4] + "..." + walletAddr[len(walletAddr)-4:]
+		finalMessage := fmt.Sprintf("✅ <b>Test Result for %s</b>\n\n%s", shortAddr, summary)
+		h.sendHTML(ctx, m.Chat.ID, finalMessage)
 
 	case strings.HasPrefix(lower, "/track "):
 		arg := strings.TrimSpace(raw[len("/track"):])
@@ -135,7 +163,6 @@ func (h *Handler) handleCommand(ctx context.Context, m *models.Message) {
 				continue
 			}
 			if err := h.tm.Track(ctx, addr); err != nil {
-				// rollback from store so DB doesn’t get out of sync
 				_ = h.st.RemoveWallet(ctx, addr)
 				failed++
 				continue
@@ -208,23 +235,25 @@ func (h *Handler) handleCommand(ctx context.Context, m *models.Message) {
 }
 
 func (h *Handler) replyHelp(ctx context.Context, chatID int64) {
+	// Updated help message
 	help := strings.TrimSpace(`
-<b>🛠 solwatch bot</b>
+<b>🛠 solwatch V2</b>
 
 <b>Commands:</b>
-• <code>/help</code> – show this help
-• <code>/track &lt;address&gt;</code> – start tracking a wallet
-• <code>/untrack &lt;address&gt;</code> – stop tracking a wallet
-• <code>/trackmany &lt;addr1&gt; &lt;addr2&gt; ...</code> – add multiple wallets
-• <code>/untrackmany &lt;addr1&gt; &lt;addr2&gt; ...</code> – remove multiple wallets
-• <code>/tracked</code> – list tracked wallets
-• <code>/health</code> – show counts and dropped subscriptions
-• <code>/kill</code> – shutdown the service
+• <code>/track &lt;address&gt;</code> – Start tracking a wallet
+• <code>/untrack &lt;address&gt;</code> – Stop tracking a wallet
+• <code>/trackmany &lt;...&gt;</code> – Add multiple wallets
+• <code>/untrackmany &lt;...&gt;</code> – Remove multiple wallets
+• <code>/tracked</code> – List tracked wallets
+• <code>/health</code> – Show service health
+• <code>/kill</code> – Shutdown the service
+
+<b>Debug:</b>
+• <code>/test &lt;sig&gt; &lt;addr&gt;</code> – Test analysis of a signature for a given wallet
 `)
 	h.sendHTML(ctx, chatID, help)
 }
 
-// sendHTML sends a Telegram message using HTML parse mode.
 func (h *Handler) sendHTML(ctx context.Context, chatID int64, html string) {
 	disable := true
 	_, err := h.bot.SendMessage(ctx, &tg.SendMessageParams{
@@ -240,11 +269,6 @@ func (h *Handler) sendHTML(ctx context.Context, chatID int64, html string) {
 	}
 }
 
-
-
-
-// escapeHTML escapes minimal characters for safe HTML messages.
-// We rely on Telegram's HTML parse mode; only a tiny subset of tags used (<b>, <code>, <a>).
 func escapeHTML(s string) string {
 	replacer := strings.NewReplacer(
 		`&`, "&amp;",

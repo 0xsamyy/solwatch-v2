@@ -16,21 +16,20 @@ type Config struct {
 	TelegramBotToken    string
 	TelegramAdminChatID int64
 	HeliusWSS           string
+	HeliusAPIURL        string // V2: For fetching tx details
 
 	// Optional (with defaults)
-	DBPath     string // default: "solwatch.db"
-	Commitment string // default: "processed" (fastest)
-
-	// Debug helpers (not strictly required, but nice to have)
-	// LogLevel could be: "debug", "info", "warn", "error" (default: "info")
-	LogLevel string
+	DBPath       string // default: "solwatch.db"
+	Commitment   string // default: "processed"
+	SolanaRPCURL string // V2: For token metadata
+	LogLevel     string
 }
 
 // allowedCommitments is kept small and explicit to avoid surprises.
 var allowedCommitments = map[string]struct{}{
-	"processed":  {},
-	"confirmed":  {},
-	"finalized":  {},
+	"processed": {},
+	"confirmed": {},
+	"finalized": {},
 }
 
 // Load reads environment variables, applies defaults, validates,
@@ -41,6 +40,8 @@ func Load() (Config, error) {
 
 	var cfg Config
 	var errs []string
+
+	// --- Required Fields ---
 
 	// Required: TELEGRAM_BOT_TOKEN
 	cfg.TelegramBotToken = strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN"))
@@ -69,6 +70,16 @@ func Load() (Config, error) {
 		errs = append(errs, fmt.Sprintf("HELIUS_WSS must start with wss://, got %q", cfg.HeliusWSS))
 	}
 
+	// Required: HELIUS_API_URL (must start with https://)
+	cfg.HeliusAPIURL = strings.TrimSpace(os.Getenv("HELIUS_API_URL"))
+	if cfg.HeliusAPIURL == "" {
+		errs = append(errs, "HELIUS_API_URL is required (your Helius HTTP API URL for fetching transactions)")
+	} else if !strings.HasPrefix(strings.ToLower(cfg.HeliusAPIURL), "https://") {
+		errs = append(errs, fmt.Sprintf("HELIUS_API_URL must start with https://, got %q", cfg.HeliusAPIURL))
+	}
+
+	// --- Optional Fields with Defaults ---
+
 	// Optional: DB_PATH (default: solwatch.db)
 	cfg.DBPath = strings.TrimSpace(os.Getenv("DB_PATH"))
 	if cfg.DBPath == "" {
@@ -78,13 +89,19 @@ func Load() (Config, error) {
 	// Optional: COMMITMENT (default: processed; normalize to lowercase)
 	commitment := strings.TrimSpace(os.Getenv("COMMITMENT"))
 	if commitment == "" {
-		commitment = "processed" // fastest, fits your use-case
+		commitment = "processed"
 	}
 	commitment = strings.ToLower(commitment)
 	if _, ok := allowedCommitments[commitment]; !ok {
 		errs = append(errs, fmt.Sprintf("COMMITMENT must be one of processed|confirmed|finalized, got %q", commitment))
 	} else {
 		cfg.Commitment = commitment
+	}
+
+	// Optional: SOLANA_RPC_URL (default: public mainnet)
+	cfg.SolanaRPCURL = strings.TrimSpace(os.Getenv("SOLANA_RPC_URL"))
+	if cfg.SolanaRPCURL == "" {
+		cfg.SolanaRPCURL = "https://api.mainnet-beta.solana.com"
 	}
 
 	// Optional: LOG_LEVEL (default: info)
@@ -122,10 +139,12 @@ func MustLoad() Config {
 // Useful to log at startup for quick debugging without leaking secrets.
 func (c Config) RedactedSummary() string {
 	return fmt.Sprintf(
-		"config{ commitment=%s, db=%s, helius_wss=%s, telegram_bot_token=%s, admin_chat_id=%d, log_level=%s }",
+		"config{ commitment=%s, db=%s, helius_wss=%s, helius_api=%s, solana_rpc=%s, telegram_bot_token=%s, admin_chat_id=%d, log_level=%s }",
 		c.Commitment,
 		c.DBPath,
 		redactURL(c.HeliusWSS),
+		redactURL(c.HeliusAPIURL),
+		c.SolanaRPCURL, // Public RPCs don't need redaction
 		redactToken(c.TelegramBotToken),
 		c.TelegramAdminChatID,
 		c.LogLevel,
@@ -133,7 +152,6 @@ func (c Config) RedactedSummary() string {
 }
 
 func redactToken(tok string) string {
-	// Keep only first 6 chars if long, else "***"
 	if len(tok) > 6 {
 		return tok[:6] + "...(redacted)"
 	}
@@ -144,13 +162,10 @@ func redactToken(tok string) string {
 }
 
 func redactURL(u string) string {
-	// If the URL contains an API key as query, hide it crudely.
-	// e.g., wss://.../?api-key=abcdef -> wss://.../?api-key=*** (redacted)
 	parts := strings.Split(u, "api-key=")
 	if len(parts) < 2 {
 		return u
 	}
-	// Cut at next delimiter if any
 	tail := parts[1]
 	if i := strings.IndexAny(tail, "&;"); i >= 0 {
 		tail = tail[:i]

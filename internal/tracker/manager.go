@@ -48,7 +48,7 @@ func (m *Manager) Untrack(_ context.Context, addr string) error {
 	defer m.mu.Unlock()
 
 	if sub, ok := m.subs[addr]; ok {
-		sub.Stop()        // graceful: closes WS and halts reconnect attempts
+		sub.Stop() // graceful: closes WS and halts reconnect attempts
 		delete(m.subs, addr)
 	}
 	return nil
@@ -68,9 +68,10 @@ func (m *Manager) List() []string {
 }
 
 // Stats reports:
-//   tracked = total number of subscribers in memory
-//   open    = how many currently report IsOpen()==true
-//   dropped = addresses that ShouldBeOpen()==true but IsOpen()==false
+//
+//	tracked = total number of subscribers in memory
+//	open    = how many currently report IsOpen()==true
+//	dropped = addresses that ShouldBeOpen()==true but IsOpen()==false
 //
 // This is used by the /health command.
 func (m *Manager) Stats() (tracked int, open int, dropped []string) {
