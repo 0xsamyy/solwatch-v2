@@ -86,11 +86,9 @@ func (h *Handler) handleCommand(ctx context.Context, m *models.Message) {
 		raw = raw[:idx]
 	}
 	switch {
-	// --- Other cases are unchanged ---
 	case lower == "/help":
 		h.replyHelp(ctx, m.Chat.ID)
 
-	// --- NEW DEBUG COMMAND ---
 	case strings.HasPrefix(lower, "/test "):
 		args := strings.Fields(raw[len("/test "):])
 		if len(args) != 2 {
@@ -100,10 +98,8 @@ func (h *Handler) handleCommand(ctx context.Context, m *models.Message) {
 		signature := args[0]
 		walletAddr := args[1]
 
-		// Let the user know we're working on it
 		h.sendHTML(ctx, m.Chat.ID, fmt.Sprintf("🔬 Analyzing signature <code>%s...</code> for wallet <code>%s...</code>", signature[:10], walletAddr[:4]))
 
-		// Call the analyzer directly
 		summary, err := h.analyzer.AnalyzeSignature(ctx, signature, walletAddr)
 		if err != nil {
 			errMsg := fmt.Sprintf("<b>Analysis Failed:</b>\n<code>%v</code>", err)
@@ -116,9 +112,8 @@ func (h *Handler) handleCommand(ctx context.Context, m *models.Message) {
 			return
 		}
 
-		// Format and send the result, clearly marking it as a test
 		shortAddr := walletAddr[:4] + "..." + walletAddr[len(walletAddr)-4:]
-		finalMessage := fmt.Sprintf("✅ <b>Test Result for %s</b>\n\n%s", shortAddr, summary)
+		finalMessage := fmt.Sprintf("🧪 <b>Test Result for %s</b>\n\n%s", shortAddr, summary)
 		h.sendHTML(ctx, m.Chat.ID, finalMessage)
 
 	case strings.HasPrefix(lower, "/track "):
@@ -197,9 +192,9 @@ func (h *Handler) handleCommand(ctx context.Context, m *models.Message) {
 			return
 		}
 		var b strings.Builder
-		b.WriteString("<b>📋 Tracked Wallets:</b>\n")
+		b.WriteString("📋 <b>Tracked Wallets:</b>\n")
 		for _, a := range list {
-			b.WriteString("• <code>")
+			b.WriteString("- <code>")
 			b.WriteString(escapeHTML(a))
 			b.WriteString("</code>\n")
 		}
@@ -208,18 +203,18 @@ func (h *Handler) handleCommand(ctx context.Context, m *models.Message) {
 	case lower == "/health":
 		rep := h.hlth.Snapshot(ctx)
 		msg := fmt.Sprintf(
-			"<b>📊 Health Report</b>\n"+
-				"• Tracked (memory): <code>%d</code>\n"+
-				"• Open subs: <code>%d</code>\n"+
-				"• Dropped: <code>%d</code>\n"+
-				"• Tracked (store): <code>%d</code>\n"+
-				"• Time: <code>%s</code>",
+			"📊 <b>Health Report</b>\n"+
+				"- Tracked (memory): <code>%d</code>\n"+
+				"- Open subs: <code>%d</code>\n"+
+				"- Dropped: <code>%d</code>\n"+
+				"- Tracked (store): <code>%d</code>\n"+
+				"- Time: <code>%s</code>",
 			rep.Tracked, rep.Open, len(rep.Dropped), rep.TrackedPersisted, rep.GeneratedAt.Format(time.RFC3339),
 		)
 		h.sendHTML(ctx, m.Chat.ID, msg)
 
 	case lower == "/kill":
-		h.sendHTML(ctx, m.Chat.ID, "shutting down…")
+		h.sendHTML(ctx, m.Chat.ID, "🛑 shutting down...")
 		go func() {
 			time.Sleep(200 * time.Millisecond)
 			if h.killFn != nil {
@@ -235,21 +230,20 @@ func (h *Handler) handleCommand(ctx context.Context, m *models.Message) {
 }
 
 func (h *Handler) replyHelp(ctx context.Context, chatID int64) {
-	// Updated help message
 	help := strings.TrimSpace(`
-<b>🛠 solwatch V2</b>
+🛠 <b>solwatch v2</b>
 
 <b>Commands:</b>
-• <code>/track &lt;address&gt;</code> – Start tracking a wallet
-• <code>/untrack &lt;address&gt;</code> – Stop tracking a wallet
-• <code>/trackmany &lt;...&gt;</code> – Add multiple wallets
-• <code>/untrackmany &lt;...&gt;</code> – Remove multiple wallets
-• <code>/tracked</code> – List tracked wallets
-• <code>/health</code> – Show service health
-• <code>/kill</code> – Shutdown the service
+- <code>/track &lt;address&gt;</code> - Start tracking a wallet
+- <code>/untrack &lt;address&gt;</code> - Stop tracking a wallet
+- <code>/trackmany &lt;...&gt;</code> - Add multiple wallets
+- <code>/untrackmany &lt;...&gt;</code> - Remove multiple wallets
+- <code>/tracked</code> - List tracked wallets
+- <code>/health</code> - Show service health
+- <code>/kill</code> - Shutdown the service
 
 <b>Debug:</b>
-• <code>/test &lt;sig&gt; &lt;addr&gt;</code> – Test analysis of a signature for a given wallet
+- <code>/test &lt;sig&gt; &lt;addr&gt;</code> - Test analysis of a signature for a given wallet
 `)
 	h.sendHTML(ctx, chatID, help)
 }

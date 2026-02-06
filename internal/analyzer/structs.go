@@ -1,9 +1,7 @@
-// internal/analyzer/structs.go
 package analyzer
 
 import "encoding/json"
 
-// HeliusTransaction and other top-level structs are unchanged.
 type HeliusTransaction struct {
 	Signature        string            `json:"signature"`
 	Timestamp        int64             `json:"timestamp"`
@@ -70,9 +68,7 @@ type RPCRequest struct {
 	Params  []interface{} `json:"params"`
 }
 
-// --- FIX IS HERE ---
-
-// GetAccountInfoResponse is NOW ONLY for jsonParsed requests.
+// GetAccountInfoResponse is for jsonParsed requests.
 type GetAccountInfoResponse struct {
 	Result struct {
 		Value struct {
@@ -88,8 +84,7 @@ type GetAccountInfoResponse struct {
 	} `json:"result"`
 }
 
-// GetAccountInfoResponse_Base64 is a NEW, SEPARATE struct for base64 requests.
-// It correctly expects the 'data' field to be an array of strings.
+// GetAccountInfoResponse_Base64 is for base64 requests.
 type GetAccountInfoResponse_Base64 struct {
 	Result struct {
 		Value struct {
@@ -98,7 +93,6 @@ type GetAccountInfoResponse_Base64 struct {
 	} `json:"result"`
 }
 
-// GetProgramAccountsResponse is unchanged.
 type GetProgramAccountsResponse struct {
 	Result []struct {
 		Pubkey string `json:"pubkey"`

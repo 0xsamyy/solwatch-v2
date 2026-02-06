@@ -1,4 +1,3 @@
-// internal/analyzer/analyzer.go
 package analyzer
 
 import (
@@ -15,7 +14,6 @@ import (
 
 var solanaAddressRegex = regexp.MustCompile(`[1-9A-HJ-NP-Za-km-z]{32,44}`)
 
-// Analyzer orchestrates transaction analysis using on-chain data.
 type Analyzer struct {
 	HeliusTxURL   string
 	SolanaRPCURL  string // The mainnet-beta RPC for on-chain lookups
@@ -24,7 +22,6 @@ type Analyzer struct {
 	priceOracle   *PriceOracle
 }
 
-// New creates a new Analyzer.
 func New(heliusTxURL, solanaRPCURL string) *Analyzer {
 	cache := &sync.Map{}
 	cache.Store(wsolMint, TokenMetadata{Symbol: "SOL", Decimals: 9})
@@ -39,7 +36,6 @@ func New(heliusTxURL, solanaRPCURL string) *Analyzer {
 	}
 }
 
-// AnalyzeSignature is the main entry point.
 func (a *Analyzer) AnalyzeSignature(ctx context.Context, signature, trackedAddr string) (string, error) {
 	tx, err := fetchHeliusTransaction(ctx, signature, a.HeliusTxURL, a.httpClient)
 	if err != nil {
@@ -63,10 +59,10 @@ func (a *Analyzer) AnalyzeSignature(ctx context.Context, signature, trackedAddr 
 		if len(received) > 0 {
 			tokenName = received[0]
 		}
-		interpretation = fmt.Sprintf("✅ CREATE & BUY via %s: Bought %s", tx.Source, tokenName)
+		interpretation = fmt.Sprintf("🧱 CREATE & BUY via %s: Bought %s", tx.Source, tokenName)
 	case "SWAP":
 		sent, received = a.parseSwapEvent(tx, trackedAddr, metadataMap)
-		interpretation = fmt.Sprintf("➡️ SWAP via %s", tx.Source)
+		interpretation = fmt.Sprintf("🔁 SWAP via %s", tx.Source)
 	default:
 		sent, received = calculateNetBalanceChanges(tx, trackedAddr, metadataMap, a.priceOracle)
 		if len(sent) > 0 && len(received) > 0 {
@@ -82,7 +78,6 @@ func (a *Analyzer) AnalyzeSignature(ctx context.Context, signature, trackedAddr 
 	return a.buildSummary(tx, interpretation, sent, received), nil
 }
 
-// ensureMetadataIsCached now uses the correct on-chain fetcher.
 func (a *Analyzer) ensureMetadataIsCached(ctx context.Context, tx *HeliusTransaction) {
 	mints := make(map[string]bool)
 	for _, transfer := range tx.TokenTransfers {
@@ -101,7 +96,6 @@ func (a *Analyzer) ensureMetadataIsCached(ctx context.Context, tx *HeliusTransac
 
 	for mint := range mints {
 		if _, found := a.metadataCache.Load(mint); !found {
-			// Not in cache, fetch it using the ON-CHAIN method.
 			meta, err := fetchOnChainMetadata(ctx, mint, a.SolanaRPCURL, a.httpClient)
 			if err != nil {
 				log.Printf("[analyzer] failed to fetch on-chain metadata for %s: %v. Using fallback.", mint, err)
@@ -114,7 +108,6 @@ func (a *Analyzer) ensureMetadataIsCached(ctx context.Context, tx *HeliusTransac
 	}
 }
 
-// The rest of the file (buildSummary, parseSwapEvent, helpers) remains the same.
 func (a *Analyzer) buildSummary(tx *HeliusTransaction, interpretation string, sent, received []string) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("<b>%s</b>\n", interpretation))
@@ -127,12 +120,12 @@ func (a *Analyzer) buildSummary(tx *HeliusTransaction, interpretation string, se
 		})
 		b.WriteString(fmt.Sprintf("ℹ️ <i>%s</i>\n", cleanedDesc))
 	}
-	b.WriteString("\n<b>💰 Transaction Breakdown:</b>\n")
+	b.WriteString("\n")
 	if len(sent) > 0 {
-		b.WriteString(fmt.Sprintf("  📤 <b>Sent:</b> %s\n", strings.Join(sent, ", ")))
+		b.WriteString(fmt.Sprintf("💰 <b>Sent:</b> %s\n", strings.Join(sent, ", ")))
 	}
 	if len(received) > 0 {
-		b.WriteString(fmt.Sprintf("  📥 <b>Received:</b> %s\n", strings.Join(received, ", ")))
+		b.WriteString(fmt.Sprintf("💸 <b>Received:</b> %s\n", strings.Join(received, ", ")))
 	}
 	b.WriteString(fmt.Sprintf("\n<a href=\"https://solscan.io/tx/%s\">%s...%s</a>", tx.Signature, tx.Signature[:6], tx.Signature[len(tx.Signature)-6:]))
 	return b.String()
@@ -197,7 +190,6 @@ func NewPriceOracle() *PriceOracle {
 	return &PriceOracle{httpClient: &http.Client{Timeout: 5 * time.Second}, cache: &sync.Map{}}
 }
 func (o *PriceOracle) GetPriceUSD(ctx context.Context, coinID string) (float64, bool) {
-	// Price oracle logic is unchanged
 	if val, found := o.cache.Load(coinID); found {
 		if time.Since(val.(cachedPrice).LastFetched) < 60*time.Second {
 			return val.(cachedPrice).Price, true

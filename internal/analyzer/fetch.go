@@ -1,4 +1,3 @@
-// internal/analyzer/fetch.go
 package analyzer
 
 import (
@@ -20,7 +19,6 @@ const (
 	metaplexMetadataProgramID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 )
 
-// fetchHeliusTransaction is unchanged.
 func fetchHeliusTransaction(ctx context.Context, signature, heliusURL string, client *http.Client) (*HeliusTransaction, error) {
 	payload := map[string][]string{"transactions": {signature}}
 	body, _ := json.Marshal(payload)
@@ -42,7 +40,6 @@ func fetchHeliusTransaction(ctx context.Context, signature, heliusURL string, cl
 	return &transactions[0], nil
 }
 
-// rpcCall is unchanged.
 func rpcCall(ctx context.Context, rpcURL string, client *http.Client, method string, params []interface{}, result interface{}) error {
 	payload := RPCRequest{JSONRPC: "2.0", ID: 1, Method: method, Params: params}
 	body, _ := json.Marshal(payload)
@@ -59,8 +56,7 @@ func rpcCall(ctx context.Context, rpcURL string, client *http.Client, method str
 	return json.NewDecoder(resp.Body).Decode(result)
 }
 
-// fetchOnChainMetadata now uses the correct structs.
-// fetchOnChainMetadata implements the logic from your Python script with added retries.
+// fetchOnChainMetadata resolves token metadata via on-chain accounts with retries.
 func fetchOnChainMetadata(ctx context.Context, mint, rpcURL string, client *http.Client) (*TokenMetadata, error) {
 	const maxRetries = 3
 	const retryDelay = 2 * time.Second
